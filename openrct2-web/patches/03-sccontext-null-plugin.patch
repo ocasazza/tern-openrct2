@@ -1,0 +1,12 @@
+--- a/src/openrct2/scripting/bindings/game/ScContext.hpp
++++ b/src/openrct2/scripting/bindings/game/ScContext.hpp
+@@ -316,7 +316,8 @@
+         {
+             auto& scriptEngine = GetContext()->GetScriptEngine();
+             auto plugin = scriptEngine.GetExecInfo().GetCurrentPlugin();
+-            auto pair = scriptEngine.CreateGameAction(ctx, actionid, args, plugin->GetMetadata().Name);
++            auto pair = scriptEngine.CreateGameAction(
++                ctx, actionid, args, plugin != nullptr ? plugin->GetMetadata().Name : std::string{});
+ 
+             std::unique_ptr<GameActions::GameAction> action = std::move(pair.first);
+ 

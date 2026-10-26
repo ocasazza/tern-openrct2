@@ -1,0 +1,28 @@
+/* Global sheet: every rule is scoped to this block's surface. Roles are set by
+   host.luau. The picture is OpenRCT2's own render, so the sheet only sizes it. */
+
+.sf-main[data-surface='plugin.openrct2.park'] {
+	padding: 0 !important;
+	gap: 0.4em !important;
+	display: flex !important;
+	flex-direction: column !important;
+	min-height: 0 !important;
+}
+
+.sf-main[data-surface='plugin.openrct2.park'] > .sf-col {
+	height: 100% !important;
+	min-height: 0 !important;
+	gap: 0 !important;
+}
+
+/* Pixel art: nearest-neighbour keeps the 32px tiles hard-edged at any size. */
+.sf-main[data-surface='plugin.openrct2.park'] .sf-image[data-role='park'] {
+	image-rendering: pixelated;
+	width: 100%;
+	min-height: 0;
+	border-radius: 0.4em;
+}
+
+.sf-dock[data-surface='plugin.openrct2.park'] [data-role='btns'] {
+	gap: 0.35em;
+}

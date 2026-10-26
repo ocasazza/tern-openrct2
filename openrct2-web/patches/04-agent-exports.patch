@@ -1,0 +1,119 @@
+--- a/src/openrct2/scripting/ScriptEngine.cpp
++++ b/src/openrct2/scripting/ScriptEngine.cpp
+@@ -2188,3 +2188,116 @@
+ }
+ 
+ #endif
++
++
++#if defined(__EMSCRIPTEN__) && defined(ENABLE_SCRIPTING)
++// Host-side agent bridge for the wasm build; all exports run on the browser main thread between frames.
++#    include <emscripten.h>
++#    include "../GameState.h"
++#    include "../actions/GameActionRunner.h"
++
++namespace OpenRCT2::Scripting
++{
++    static std::shared_ptr<Plugin> FindAgentPlugin()
++    {
++        auto& engine = GetContext()->GetScriptEngine();
++        for (auto& plugin : engine.GetPlugins())
++        {
++            if (plugin->HasStarted() && plugin->GetMetadata().Name == "orct2-agent")
++            {
++                return plugin;
++            }
++        }
++        return nullptr;
++    }
++
++    static std::string CallAgentFunction(const std::shared_ptr<Plugin>& plugin, const char* name, const std::string* arg)
++    {
++        auto& engine = GetContext()->GetScriptEngine();
++        JSContext* ctx = plugin->GetContext();
++        JSValue global = JS_GetGlobalObject(ctx);
++        JSValue fn = JS_GetPropertyStr(ctx, global, name);
++        JS_FreeValue(ctx, global);
++        std::vector<JSValue> args;
++        if (arg != nullptr)
++        {
++            args.push_back(JS_NewStringLen(ctx, arg->data(), arg->size()));
++        }
++        JSValue ret = engine.ExecutePluginCall(plugin, fn, JS_UNDEFINED, args, true, false, true);
++        JS_FreeValue(ctx, fn);
++        std::string result;
++        if (JS_IsString(ret))
++        {
++            size_t len{};
++            const char* str = JS_ToCStringLen(ctx, &len, ret);
++            if (str != nullptr)
++            {
++                result.assign(str, len);
++            }
++        }
++        JS_FreeValue(ctx, ret);
++        return result;
++    }
++
++#    pragma clang diagnostic push
++#    pragma clang diagnostic ignored "-Wmissing-prototypes"
++
++    extern "C" {
++    // Runs __orct2_begin, flushes the game action queue so executeAction callbacks fire, then __orct2_end.
++    EMSCRIPTEN_KEEPALIVE const char* orct2_agent_call(const char* request)
++    {
++        static std::string response;
++        try
++        {
++            auto agent = FindAgentPlugin();
++            if (agent == nullptr)
++            {
++                response = R"({"ok":false,"error":{"code":"agent_not_ready"}})";
++            }
++            else
++            {
++                std::string req = request != nullptr ? request : "";
++                CallAgentFunction(agent, "__orct2_begin", &req);
++                GameActions::ProcessQueue(getGameState());
++                response = CallAgentFunction(agent, "__orct2_end", nullptr);
++            }
++        }
++        catch (...)
++        {
++            response = R"({"ok":false,"error":{"code":"native_exception"}})";
++        }
++        return response.c_str();
++    }
++
++    EMSCRIPTEN_KEEPALIVE int orct2_load_park(const char* path, int asScenario)
++    {
++        try
++        {
++            return GetContext()->LoadParkFromFile(u8string(path != nullptr ? path : ""), false, asScenario != 0) ? 1 : 0;
++        }
++        catch (...)
++        {
++            return 0;
++        }
++    }
++
++    EMSCRIPTEN_KEEPALIVE int orct2_advance(int ticks)
++    {
++        int advanced = 0;
++        try
++        {
++            for (; advanced < ticks; ++advanced)
++            {
++                gameStateUpdateLogic();
++            }
++        }
++        catch (...)
++        {
++        }
++        return advanced;
++    }
++    }
++
++#    pragma clang diagnostic pop
++} // namespace OpenRCT2::Scripting
++#endif

@@ -1,0 +1,53 @@
+/* Global sheet: every rule is scoped to this block's surface. Roles are set by
+   host.luau. */
+
+.sf-main[data-surface='plugin.openrct2.game'] {
+	padding: 0 !important;
+	gap: 0 !important;
+	display: flex !important;
+	flex-direction: column !important;
+	min-height: 0 !important;
+}
+
+.sf-main[data-surface='plugin.openrct2.game'] > .sf-col {
+	height: 100% !important;
+	min-height: 0 !important;
+	gap: 0.6em !important;
+	padding: 0.8em 1em !important;
+}
+
+.sf-main[data-surface='plugin.openrct2.game'] [data-role='banner'] {
+	border-radius: 0.4em;
+	padding: 0.6em 0.9em;
+	background: linear-gradient(180deg, #1f4d2e 0%, #143520 100%);
+}
+
+.sf-main[data-surface='plugin.openrct2.game'] [data-role='banner-down'] {
+	border-radius: 0.4em;
+	padding: 0.6em 0.9em;
+	background: linear-gradient(180deg, #4a2328 0%, #2e1418 100%);
+}
+
+.sf-main[data-surface='plugin.openrct2.game'] [data-role='banner-wait'] {
+	border-radius: 0.4em;
+	padding: 0.6em 0.9em;
+	background: linear-gradient(180deg, #4a3d1c 0%, #2f2610 100%);
+}
+
+.sf-main[data-surface='plugin.openrct2.game'] [data-role='stats'] {
+	display: flex !important;
+	flex-direction: row !important;
+	flex-wrap: wrap;
+	gap: 0.5em;
+}
+
+.sf-main[data-surface='plugin.openrct2.game'] [data-role='stat'] {
+	flex: 1 1 11em;
+	border-radius: 0.4em;
+	padding: 0.45em 0.7em;
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.sf-dock[data-surface='plugin.openrct2.game'] [data-role='btns'] {
+	gap: 0.35em;
+}

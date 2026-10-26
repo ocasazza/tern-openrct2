@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""orct2: command-line client for the OpenRCT2 web agent API (ORCT2_URL selects the server)."""
+import base64
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+DEFAULT_URL = "http://127.0.0.1:8737"
+
+# (verb, arguments, description, example). Single source for `orct2 help` and README.md.
+VERBS = [
+    ("status", "[include=[\"finance\",\"messages\",\"awards\"]]", "Tick, pause/speed, date, park, scenario, climate, research, counts; include adds sections.", "orct2 status include='[\"finance\"]'"),
+    ("rides", "[id=N] [detail=true]", "List rides (or one); detail adds stations, ratings, breakdown.", "orct2 rides id=0 detail=true"),
+    ("guests", "[sample=N] [id=N]", "Guest aggregates, thought histogram, N unhappiest guests; id returns one guest.", "orct2 guests sample=5"),
+    ("staff", "", "All staff with position, type, orders, costume.", "orct2 staff"),
+    ("map", "[x=0 y=0 w=16 h=16]", "Tile window (tile coords, w*h<=1024): surface heights, ownership, elements.", "orct2 map x=60 y=60 w=8 h=8"),
+    ("objects", "type=ride [installed=true] [offset=N limit=N]", "Loaded (or installed) objects with index/identifier; needed by ridecreate.", "orct2 objects type=ride"),
+    ("events", "[since=N] [limit=N]", "Event ring buffer (day ticks, actions, breakdowns, crashes, park messages).", "orct2 events since=0 limit=20"),
+    ("act", "<action> key=value... [--dry-run]", "Query then execute a game action; --dry-run only queries. Missing args -> invalid_args.missing.", "orct2 act ridesetprice ride=0 price=30 isPrimaryPrice=true --dry-run"),
+    ("actions", "[action=<name>]", "List game actions with required args (or one).", "orct2 actions action=ridesetprice"),
+    ("park.open", "", "Open the park.", "orct2 park.open"),
+    ("park.close", "", "Close the park.", "orct2 park.close"),
+    ("park.fee", "value=N", "Set park entrance fee (tenths of currency).", "orct2 park.fee value=100"),
+    ("ride.price", "ride=N price=N [primary=true]", "Set a ride's primary (default) or secondary price.", "orct2 ride.price ride=0 price=30"),
+    ("ride.status", "ride=N status=open|closed|testing|simulating", "Set ride status.", "orct2 ride.status ride=0 status=open"),
+    ("staff.hire", "staffType=handyman|mechanic|security|entertainer [costumeIndex=N] [staffOrders=N]", "Hire staff at a random position.", "orct2 staff.hire staffType=mechanic"),
+    ("pause", "[paused=true|false]", "Set or (no arg) read the pause state.", "orct2 pause paused=true"),
+    ("speed", "[speed=1..4]", "Set or (no arg) read the game speed.", "orct2 speed speed=2"),
+    ("advance", "ticks=N", "Run N game ticks synchronously (fast-forward), then return status.", "orct2 advance ticks=400"),
+    ("load", "path=<file> [asScenario=true]", "Load a park/scenario file from the wasm filesystem, then return status.", "orct2 load path=\"/RCT/Scenarios/Forest Frontiers.SC6\" asScenario=true"),
+    ("save", "filename=<name>", "Save to save/<name>.park in persistent storage.", "orct2 save filename=agent1"),
+    ("screenshot", "OUT.png [filename=a.png zoom=0 rotation=0 x=N y=N width=1024 height=768]", "Render the map to a PNG file at OUT.png (x/y are map units; default map centre).", "orct2 screenshot /tmp/park.png zoom=1"),
+    ("eval", "'<js>'", "Run JS in the plugin context; the JSON-able result is returned as value.", "orct2 eval 'park.cash'"),
+    ("call", "'<json>'", "POST a raw request object.", "orct2 call '{\"v\":\"status\"}'"),
+    ("health", "", "GET /api/health (server + page connection).", "orct2 health"),
+    ("help", "[--markdown]", "This listing.", "orct2 help"),
+]
+
+
+def markdown_table():
+    rows = ["| Verb | Arguments | Description | Example |", "|---|---|---|---|"]
+    for verb, args, desc, example in VERBS:
+        cell = lambda s: s.replace("|", "\\|")
+        rows.append("| `%s` | %s | %s | `%s` |" % (verb, "`%s`" % cell(args) if args else "", cell(desc), cell(example)))
+    return "\n".join(rows)
+
+
+def help_text():
+    width = max(len(v[0]) for v in VERBS)
+    lines = [
+        "usage: orct2 <verb> [key=value ...]   (values parsed as JSON when valid; dotted keys nest)",
+        "       ORCT2_URL selects the server (default %s)" % DEFAULT_URL,
+        "",
+    ]
+    for verb, args, desc, example in VERBS:
+        lines.append("  %-*s  %s" % (width, verb, desc))
+        lines.append("  %-*s    args: %s" % (width, "", args or "(none)"))
+        lines.append("  %-*s    e.g.  %s" % (width, "", example))
+    return "\n".join(lines)
+
+
+def parse_value(text):
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def set_dotted(target, key, value):
+    parts = key.split(".")
+    for part in parts[:-1]:
+        nxt = target.get(part)
+        if not isinstance(nxt, dict):
+            nxt = target[part] = {}
+        target = nxt
+    target[parts[-1]] = value
+
+
+def parse_pairs(items):
+    out = {}
+    for item in items:
+        if "=" not in item:
+            die("expected key=value, got %r" % item)
+        key, _, value = item.partition("=")
+        if not key:
+            die("empty key in %r" % item)
+        set_dotted(out, key, parse_value(value))
+    return out
+
+
+def die(message, code=2):
+    sys.stderr.write("orct2: %s\n" % message)
+    sys.exit(code)
+
+
+def base_url():
+    return os.environ.get("ORCT2_URL", DEFAULT_URL).rstrip("/")
+
+
+def http(method, path, body=None, timeout=75):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(base_url() + path, data=data, method=method,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as err:
+        raw = err.read()
+    except (urllib.error.URLError, OSError) as err:
+        return {"ok": False, "error": {"code": "server_unreachable", "message": "%s: %s" % (base_url(), err)}}
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {"ok": False, "error": {"code": "bad_response", "message": raw[:200].decode("utf-8", "replace")}}
+
+
+def emit(resp):
+    print(json.dumps(resp, indent=2, ensure_ascii=False))
+    sys.exit(0 if isinstance(resp, dict) and resp.get("ok") is True else 1)
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(help_text())
+        return
+    verb, rest = argv[0], argv[1:]
+    dry = "--dry-run" in rest
+    rest = [a for a in rest if a != "--dry-run"]
+
+    if verb == "help":
+        print(markdown_table() if "--markdown" in rest else help_text())
+        return
+    if verb == "health":
+        emit(http("GET", "/api/health"))
+    if verb == "call":
+        if len(rest) != 1:
+            die("usage: orct2 call '<json>'")
+        try:
+            req = json.loads(rest[0])
+        except ValueError as err:
+            die("invalid JSON: %s" % err)
+        emit(http("POST", "/api", req))
+    if verb == "eval":
+        if len(rest) != 1:
+            die("usage: orct2 eval '<js>'")
+        emit(http("POST", "/api", {"v": "eval", "js": rest[0]}))
+    if verb == "act":
+        if not rest or "=" in rest[0]:
+            die("usage: orct2 act <action> key=value... [--dry-run]")
+        req = {"v": "act", "action": rest[0], "args": parse_pairs(rest[1:])}
+        if dry:
+            req["dryRun"] = True
+        emit(http("POST", "/api", req))
+    if verb == "screenshot":
+        if not rest or "=" in rest[0]:
+            die("usage: orct2 screenshot OUT.png [key=value...]")
+        out, req = rest[0], {"v": "screenshot"}
+        opts = parse_pairs(rest[1:])
+        for key in ("x", "y"):
+            if key in opts:
+                set_dotted(opts, "position." + key, opts.pop(key))
+        req.update(opts)
+        req.setdefault("filename", "orct2-%d.png" % int(time.time() * 1000))
+        resp = http("POST", "/api", req)
+        encoded = resp.pop("png_base64", None) if isinstance(resp, dict) else None
+        if resp.get("ok") and encoded:
+            png = base64.b64decode(encoded)
+            with open(out, "wb") as fh:
+                fh.write(png)
+            resp["saved"] = out
+            resp["bytes"] = len(png)
+        elif resp.get("ok"):
+            resp = {"ok": False, "error": {"code": "no_image", "message": "response carried no png_base64"}}
+        emit(resp)
+
+    if verb not in {v[0] for v in VERBS}:
+        die("unknown verb %r (try: orct2 help)" % verb)
+    req = {"v": verb}
+    req.update(parse_pairs(rest))
+    if dry:
+        req["dryRun"] = True
+    emit(http("POST", "/api", req))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

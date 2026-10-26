@@ -1,0 +1,19 @@
+schema = 1
+id = "openrct2"
+name = "OpenRCT2"
+version = "0.2.0"
+description = "Play OpenRCT2 in a Tern browser pane with a live park block, and render parks from your own RCT2 install."
+icon = "canvas"
+host = "host.luau"
+window = "window.luau"
+styles = ["park.css", "game.css"]
+
+[[blocks]]
+id = "park"
+title = "OpenRCT2"
+icon = "canvas"
+
+[[blocks]]
+id = "game"
+title = "OpenRCT2"
+icon = "play"
